@@ -78,8 +78,293 @@ IncidentController отвечает за создание, просмотр, н�
 
 ### Схема данных
 
-Описание отношений и структур данных, используемых в ПС. Также представить скрипт (программный код), который необходим для генерации БД
+Описание отношений и структур данных, используемых в ПС. Представлен скрипт (программный код), который необходим для генерации БД
 
+Схема для всех сервисов: https://drive.google.com/drive/folders/1M62G38tBb4aeFgIsBe7L7UaXWzHaz0jJ
+
+Скрипты:
+
+
+ Monitoring Service schema
+
+```
+
+CREATE TYPE source_system AS ENUM ('1C');
+create type event_flow_type as enum ('contract_signed');
+
+CREATE TABLE procurement_event (
+	id UUID PRIMARY KEY,
+	source_system source_system NOT NULL,
+	event_type event_flow_type NOT NULL,
+	payload_json JSONB NOT NULL,
+	occurred_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE rule_evaluation (
+	id UUID PRIMARY KEY,
+	event_id UUID NOT NULL REFERENCES procurement_event(id)
+		ON DELETE CASCADE ON UPDATE CASCADE,
+	rule_id UUID NOT NULL,
+	result BOOLEAN NOT NULL,
+	severity Integer NOT NULL,
+	evaluated_at TIMESTAMP NOT NULL,
+	CONSTRAINT uq_rule_eval UNIQUE (event_id, rule_id)
+);
+
+create type outbox_status as enum ('ACTIVE', 'DRAFT');
+
+CREATE TABLE incident_outbox (
+	id UUID PRIMARY KEY,
+	event_id UUID NOT NULL REFERENCES procurement_event(id)
+		ON DELETE CASCADE ON UPDATE CASCADE,
+	incident_payload JSONB NOT NULL,
+	status outbox_status NOT NULL,
+	published_at TIMESTAMP
+);
+
+-- Indexes
+CREATE INDEX idx_procurement_event_type ON procurement_event(event_type);
+CREATE INDEX idx_procurement_event_date ON procurement_event(occurred_at);
+CREATE INDEX idx_rule_eval_severity ON rule_evaluation(severity);
+CREATE INDEX idx_incident_outbox_status ON incident_outbox(status);
+
+```
+
+
+-- Rules Service schema
+
+```
+
+CREATE TABLE requirement (
+    id UUID PRIMARY KEY,
+    title VARCHAR(100) NOT NULL,
+    source VARCHAR(100) NOT NULL,
+    area VARCHAR(50),
+    created_at TIMESTAMP NOT NULL,
+    CONSTRAINT uq_requirement_title_source UNIQUE (title, source)
+);
+
+CREATE TABLE control (
+    id UUID PRIMARY KEY,
+    requirement_id UUID NOT NULL REFERENCES requirement(id)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    description TEXT
+);
+
+create type rule_status as enum ('PENDING', 'SENT', 'FAILED');
+
+CREATE TABLE rule (
+    id UUID PRIMARY KEY,
+    control_id UUID NOT NULL REFERENCES control(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    expression TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    status rule_status  NOT NULL,
+    activated_at TIMESTAMP,
+    CONSTRAINT uq_rule_control_version UNIQUE (control_id, version)
+);
+
+create type process_code_type as enum ('PROCUREMENT_TENDER', 'PROCUREMENT_AUCTION', 'DIRECT_CONTRACT', 'CONTRACT_EXECUTION');
+
+CREATE TABLE rule_process_binding (
+    rule_id UUID NOT NULL REFERENCES rule(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    process_code process_code_type NOT NULL,
+    PRIMARY KEY (rule_id, process_code)
+);
+
+CREATE TABLE rule_version_history (
+    id UUID PRIMARY KEY,
+    rule_id UUID NOT NULL REFERENCES rule(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    version INTEGER NOT NULL,
+    change_log TEXT,
+    changed_at TIMESTAMP NOT NULL
+);
+
+-- Indexes
+CREATE INDEX idx_control_requirement ON control(requirement_id);
+CREATE INDEX idx_rule_status ON rule(status);
+CREATE INDEX idx_rule_version_history_rule ON rule_version_history(rule_id);
+```
+
+
+
+-- Workflow Service schema
+
+```
+
+create type incident_status as enum ('OPEN', 'RESOLVED'); 
+
+CREATE TABLE incident (
+    id UUID PRIMARY KEY,
+    rule_id UUID NOT NULL,
+    severity VARCHAR(20) NOT NULL,
+    status incident_status NOT NULL,
+    assigned_to UUID,
+    sla_due_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL
+);
+
+create type case_status as enum ('OPEN', 'CLOSED');
+
+CREATE TABLE workflow_case (
+    id UUID PRIMARY KEY,
+    owner_id UUID NOT NULL,
+    status case_status NOT NULL,
+    opened_at TIMESTAMP NOT NULL,
+    closed_at TIMESTAMP
+);
+
+CREATE TABLE case_incident_link (
+    case_id UUID NOT NULL REFERENCES workflow_case(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    incident_id UUID NOT NULL REFERENCES incident(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    PRIMARY KEY (case_id, incident_id)
+);
+
+create type action_plan_status as enum('OPEN', 'COMPLETED');
+
+CREATE TABLE action_plan (
+    id UUID PRIMARY KEY,
+    case_id UUID NOT NULL REFERENCES workflow_case(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    status action_plan_status NOT NULL,
+    verified_by UUID,
+    verified_at TIMESTAMP
+);
+
+create type action_item_status as enum ('TODO', 'IN_PROGRESS', 'DONE');
+
+CREATE TABLE action_item (
+    id UUID PRIMARY KEY,
+    action_plan_id UUID NOT NULL REFERENCES action_plan(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    title VARCHAR(100) NOT NULL,
+    due_date DATE NOT NULL,
+    status action_item_status NOT NULL
+);
+
+CREATE TABLE action_item_owner (
+    action_item_id UUID NOT NULL REFERENCES action_item(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    owner_id UUID NOT NULL,
+    PRIMARY KEY (action_item_id, owner_id)
+);
+
+CREATE TABLE action_item_evidence (
+    action_item_id UUID NOT NULL REFERENCES action_item(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    evidence_url TEXT NOT NULL,
+    PRIMARY KEY (action_item_id, evidence_url)
+);
+
+create type risk_status as enum ('NORMAL', 'WATCHLIST', 'HIGH_RISK', 'CRITICAL');
+
+CREATE TABLE vendor_risk_profile (
+    vendor_id UUID PRIMARY KEY,
+    complaints_count INTEGER NOT NULL,
+    delays_count INTEGER NOT NULL,
+    risk_status risk_status NOT NULL,
+    updated_at TIMESTAMP NOT NULL
+);
+
+create type outbox_event_type as enum('IncidentCreated', 'ActionItemOverdue', 'CaseClosed');
+create type outbox_status as enum('PENDING','SENT','FAILED');
+
+CREATE TABLE domain_event_outbox (
+    id UUID PRIMARY KEY,
+    aggregate_id UUID NOT NULL,
+    event_type outbox_event_type NOT NULL,
+    payload_json JSONB NOT NULL,
+    status outbox_status NOT NULL,
+    published_at TIMESTAMP
+);
+
+-- Indexes
+CREATE INDEX idx_incident_status ON incident(status);
+CREATE INDEX idx_incident_sla ON incident(sla_due_at);
+CREATE INDEX idx_incident_rule ON incident(rule_id);
+CREATE INDEX idx_case_owner ON workflow_case(owner_id);
+CREATE INDEX idx_action_plan_case ON action_plan(case_id);
+CREATE INDEX idx_action_item_plan ON action_item(action_plan_id);
+CREATE INDEX idx_vendor_risk_status ON vendor_risk_profile(risk_status);
+CREATE INDEX idx_domain_event_outbox_status ON domain_event_outbox(status);
+
+```
+
+
+-- Notification Service schema
+```
+
+create type notification_status_type as enum ('PENDING', 'SENT', 'FAILED');
+
+CREATE TABLE notification (
+    id UUID PRIMARY KEY,
+    type VARCHAR(50) NOT NULL,
+    payload_json JSONB NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    status notification_status_type NOT NULL
+);
+
+create type recipient_role as enum ('MANAGER', 'HEAD_OF_DEPARTMENT', 'EXECUTOR', 'SYSTEM_ADMIN');
+
+CREATE TABLE recipient (
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL,
+    role recipient_role NOT NULL,
+    CONSTRAINT uq_recipient_user UNIQUE (user_id)
+);
+
+create type channel as enum ('EMAIL', 'APP', 'SMS');
+
+CREATE TABLE recipient_channel (
+    recipient_id UUID NOT NULL REFERENCES recipient(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    channel_type channel NOT NULL,
+    address VARCHAR(100) NOT NULL,
+    PRIMARY KEY (recipient_id, channel_type)
+);
+
+CREATE TABLE notification_recipient_link (
+    notification_id UUID NOT NULL REFERENCES notification(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    recipient_id UUID NOT NULL REFERENCES recipient(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    PRIMARY KEY (notification_id, recipient_id)
+);
+
+CREATE TABLE template (
+    id UUID PRIMARY KEY,
+    type VARCHAR(50) NOT NULL,
+    subject VARCHAR(100) NOT NULL,
+    body_html TEXT NOT NULL,
+    channel channel NOT NULL,
+    CONSTRAINT uq_template_type_channel UNIQUE (type, channel)
+);
+
+create type delivery_status_type as enum ('PENDING', 'SENT', 'FAILED');
+
+CREATE TABLE delivery_log (
+    id UUID PRIMARY KEY,
+    notification_id UUID NOT NULL REFERENCES notification(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    recipient_id UUID NOT NULL REFERENCES recipient(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    channel channel NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    attempts INTEGER NOT NULL,
+    sent_at TIMESTAMP
+);
+
+-- Indexes
+CREATE INDEX idx_notification_status ON notification(status);
+CREATE INDEX idx_recipient_channel_type ON recipient_channel(channel_type);
+CREATE INDEX idx_delivery_log_status ON delivery_log(status);
+CREATE INDEX idx_delivery_log_recipient ON delivery_log(recipient_id);
+```
 ---
 
 ## **Функциональные возможности**
