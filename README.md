@@ -375,7 +375,8 @@ CREATE INDEX idx_delivery_log_recipient ON delivery_log(recipient_id);
 
 ### User-flow диаграммы
 
-Описание переходов между части ПС для всех ролей из диаграммы ВИ (название ролей должны совпадать с тем, что указано на c4-модели и диаграмме вариантов использования)
+Описание переходов между части ПС для всех ролей из диаграммы ВИ.
+Ссылка на все user flow: https://www.figma.com/board/GmrwX1KPZSJcdxHRt2M33c/UserFlow-TrustFlow-CMS?node-id=0-1&p=f&t=rDpzlQokYBQIsRpO-0
 
 
 ---
