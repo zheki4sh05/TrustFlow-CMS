@@ -207,7 +207,7 @@ CREATE TABLE incident (
     created_at TIMESTAMP NOT NULL
 );
 
-create type case_status as enum ('OPEN', 'CLOSED');
+create type case_status as enum ('INITIAL', 'OPEN', 'ASSIGNED', 'INVESTIGATING', 'ACTION_PLAN', 'ACTION_IN_PROGRESS', 'WAITING_VERIFICATION', 'ESCALATED', 'REJECTED', 'CLOSED');
 
 CREATE TABLE workflow_case (
     id UUID PRIMARY KEY,
@@ -385,7 +385,8 @@ CREATE INDEX idx_delivery_log_recipient ON delivery_log(recipient_id);
 
 ### UML-диаграммы
 
-Представить все UML-диаграммы , которые позволят более точно понять структуру и детали реализации ПС
+Представить все UML-диаграммы , которые позволят более точно понять структуру и детали реализации ПС. Для ознакомления воспользуйтесь ссылкой на гугл диск: 
+https://drive.google.com/drive/folders/1xDh6kxgR4TLpSyVl-rzLH-chbLOWgkMZ
 
 ### Спецификация API
 
